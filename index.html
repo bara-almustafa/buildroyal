@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+<title>BuildRoyale — P2P Battle Royale</title>
+<link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <!-- ===== Main menu ===== -->
+  <div id="menu" class="screen">
+    <div class="panel">
+      <h1>BUILD<span>ROYALE</span></h1>
+      <p class="tag">A browser battle-royale. Peer-to-peer. No server.</p>
+
+      <label class="field">
+        <span>Your name</span>
+        <input id="nameInput" maxlength="12" placeholder="Player" autocomplete="off" />
+      </label>
+
+      <div class="btns">
+        <button id="hostBtn" class="btn primary">Host a match</button>
+        <div class="join">
+          <input id="codeInput" maxlength="6" placeholder="ROOM CODE" autocomplete="off" />
+          <button id="joinBtn" class="btn">Join</button>
+        </div>
+      </div>
+
+      <button id="soloBtn" class="btn ghost">Play solo vs bots</button>
+
+      <div id="status" class="status"></div>
+
+      <div class="controls">
+        <h3>Controls</h3>
+        <ul>
+          <li><b>WASD</b> move</li>
+          <li><b>Mouse</b> aim · <b>Click</b> shoot</li>
+          <li><b>Q</b> build wall · <b>F</b> build ramp</li>
+          <li><b>R</b> reload · <b>E</b> pick up loot</li>
+          <li><b>1 / 2</b> switch weapon · <b>Shift</b> sprint</li>
+        </ul>
+      </div>
+    </div>
+    <footer>Share your room code so friends can join directly — the connection is browser-to-browser.</footer>
+  </div>
+
+  <!-- ===== Lobby (host) ===== -->
+  <div id="lobby" class="screen hidden">
+    <div class="panel">
+      <h2>Lobby</h2>
+      <p class="tag">Room code</p>
+      <div id="roomCode" class="roomcode">------</div>
+      <p class="hint">Players send you this code to join. Start whenever you're ready.</p>
+      <ul id="playerList" class="playerlist"></ul>
+      <button id="startBtn" class="btn primary">Drop in!</button>
+    </div>
+  </div>
+
+  <!-- ===== Game ===== -->
+  <div id="game" class="screen hidden">
+    <canvas id="canvas"></canvas>
+
+    <div id="hud">
+      <div class="hud-top">
+        <div class="alive">Alive: <span id="aliveCount">1</span></div>
+        <div class="storm" id="stormInfo">Storm closing…</div>
+        <div class="kills">Eliminations: <span id="killCount">0</span></div>
+      </div>
+
+      <div class="hud-bottom">
+        <div class="bars">
+          <div class="bar shield"><div id="shieldFill" class="fill"></div><span id="shieldText">0</span></div>
+          <div class="bar health"><div id="healthFill" class="fill"></div><span id="healthText">100</span></div>
+        </div>
+        <div class="weaponbox">
+          <div id="weaponName" class="wname">Pistol</div>
+          <div id="ammo" class="ammo">12 / 48</div>
+        </div>
+        <div class="mats">
+          <div class="matbox"><span class="icon">▦</span><span id="matCount">100</span></div>
+        </div>
+      </div>
+
+      <div id="minimap"><canvas id="miniCanvas" width="160" height="160"></canvas></div>
+      <div id="killfeed"></div>
+    </div>
+
+    <!-- Mobile controls -->
+    <div id="touch" class="hidden">
+      <div id="stickMove" class="stick"><div class="knob"></div></div>
+      <div id="stickAim" class="stick"><div class="knob"></div></div>
+      <div class="tbtns">
+        <button data-act="build" class="tbtn">BUILD</button>
+        <button data-act="reload" class="tbtn">RELOAD</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== Game over ===== -->
+  <div id="over" class="screen hidden">
+    <div class="panel">
+      <h2 id="overTitle">Victory Royale!</h2>
+      <p id="overStats" class="tag"></p>
+      <button id="againBtn" class="btn primary">Back to menu</button>
+    </div>
+  </div>
+
+  <!-- PeerJS: WebRTC made easy. Pinned version from cdnjs. -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js"></script>
+  <script src="js/net.js"></script>
+  <script src="js/game.js"></script>
+</body>
+</html>

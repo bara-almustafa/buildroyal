@@ -1,0 +1,88 @@
+:root{
+  --bg:#0c1220; --panel:#131c2f; --panel2:#1b2742;
+  --accent:#ffd24a; --accent2:#4aa3ff; --purple:#9b6bff;
+  --text:#e9eefb; --muted:#8b97b5; --danger:#ff5d6c;
+  --green:#39d98a; --shieldc:#4aa3ff;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--text);
+  font-family:"Segoe UI",system-ui,Arial,sans-serif;overflow:hidden;
+  -webkit-user-select:none;user-select:none;touch-action:none}
+
+.screen{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column}
+.hidden{display:none!important}
+
+/* ---- panels / menu ---- */
+.panel{background:linear-gradient(160deg,var(--panel),var(--panel2));
+  border:1px solid rgba(255,255,255,.08);border-radius:18px;padding:30px 34px;
+  width:min(440px,92vw);box-shadow:0 30px 80px rgba(0,0,0,.55);text-align:center}
+h1{font-size:46px;margin:0 0 4px;letter-spacing:2px;font-weight:900}
+h1 span{color:var(--accent)}
+h2{margin:0 0 10px;font-size:30px;letter-spacing:1px}
+.tag{color:var(--muted);margin:0 0 18px}
+.hint{color:var(--muted);font-size:13px;margin:8px 0 16px}
+
+.field{display:block;text-align:left;margin:0 0 16px}
+.field span{display:block;font-size:12px;color:var(--muted);margin-bottom:6px;text-transform:uppercase;letter-spacing:1px}
+input{width:100%;padding:12px 14px;border-radius:10px;border:1px solid rgba(255,255,255,.12);
+  background:#0b1222;color:var(--text);font-size:16px;outline:none}
+input:focus{border-color:var(--accent2)}
+
+.btn{cursor:pointer;border:none;border-radius:10px;padding:12px 16px;font-size:15px;font-weight:700;
+  background:var(--panel2);color:var(--text);transition:transform .06s,filter .15s}
+.btn:hover{filter:brightness(1.12)} .btn:active{transform:translateY(1px)}
+.btn.primary{background:linear-gradient(135deg,var(--accent),#ff9f1c);color:#2a1a00}
+.btn.ghost{background:transparent;border:1px solid rgba(255,255,255,.15);color:var(--muted)}
+.btns{display:flex;flex-direction:column;gap:12px}
+.join{display:flex;gap:8px}
+.join input{text-transform:uppercase;letter-spacing:3px;text-align:center;font-weight:800}
+.join .btn{flex:0 0 auto}
+
+.status{margin-top:14px;min-height:20px;color:var(--accent2);font-size:14px}
+.status.err{color:var(--danger)}
+
+.controls{margin-top:22px;text-align:left;border-top:1px solid rgba(255,255,255,.08);padding-top:16px}
+.controls h3{margin:0 0 8px;font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:1px}
+.controls ul{margin:0;padding:0;list-style:none;display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:13px;color:var(--muted)}
+.controls b{color:var(--text)}
+footer{margin-top:22px;color:var(--muted);font-size:12px;max-width:440px;text-align:center;padding:0 16px}
+
+.roomcode{font-size:44px;font-weight:900;letter-spacing:8px;color:var(--accent);
+  background:#0b1222;border-radius:12px;padding:14px;margin:6px 0 4px}
+.playerlist{list-style:none;padding:0;margin:14px 0;max-height:200px;overflow:auto;text-align:left}
+.playerlist li{background:#0b1222;border-radius:8px;padding:10px 14px;margin-bottom:6px;display:flex;justify-content:space-between}
+.playerlist li .dot{color:var(--green)}
+
+/* ---- game ---- */
+#canvas{display:block;width:100vw;height:100vh;background:#1d3b2a;cursor:crosshair}
+#hud{position:fixed;inset:0;pointer-events:none;font-weight:700}
+.hud-top{position:absolute;top:14px;left:0;right:0;display:flex;justify-content:center;gap:22px;font-size:15px}
+.hud-top .alive{color:var(--green)} .hud-top .kills{color:var(--accent)}
+.hud-top .storm{color:var(--purple)}
+
+.hud-bottom{position:absolute;left:18px;bottom:18px;display:flex;gap:18px;align-items:flex-end}
+.bars{display:flex;flex-direction:column;gap:6px;width:230px}
+.bar{position:relative;height:20px;background:rgba(0,0,0,.45);border-radius:6px;overflow:hidden;border:1px solid rgba(255,255,255,.12)}
+.bar .fill{position:absolute;inset:0;width:100%;transform-origin:left;transition:transform .15s}
+.bar.health .fill{background:linear-gradient(90deg,#39d98a,#8fffbf)}
+.bar.shield .fill{background:linear-gradient(90deg,#4aa3ff,#9fd0ff)}
+.bar span{position:absolute;right:8px;top:1px;font-size:12px;text-shadow:0 1px 2px #000}
+
+.weaponbox{background:rgba(0,0,0,.45);border:1px solid rgba(255,255,255,.12);border-radius:8px;padding:8px 14px;text-align:center}
+.wname{color:var(--accent);font-size:15px} .ammo{font-size:13px;color:var(--muted)}
+.mats .matbox{background:rgba(0,0,0,.45);border:1px solid rgba(255,255,255,.12);border-radius:8px;padding:8px 14px;color:#c9a06b;display:flex;gap:6px;align-items:center}
+.mats .icon{font-size:18px}
+
+#minimap{position:absolute;top:14px;right:14px;border:2px solid rgba(255,255,255,.18);border-radius:8px;overflow:hidden;background:#0b1a12}
+#killfeed{position:absolute;top:60px;right:14px;width:230px;text-align:right;font-size:13px;color:var(--text)}
+#killfeed div{background:rgba(0,0,0,.4);border-radius:6px;padding:4px 8px;margin-bottom:4px;animation:fade 4s forwards}
+@keyframes fade{0%{opacity:1}80%{opacity:1}100%{opacity:0}}
+
+/* ---- touch ---- */
+#touch{position:fixed;inset:0;pointer-events:none}
+.stick{position:absolute;bottom:40px;width:120px;height:120px;border-radius:50%;
+  background:rgba(255,255,255,.07);border:2px solid rgba(255,255,255,.14);pointer-events:auto}
+#stickMove{left:30px} #stickAim{right:30px}
+.stick .knob{position:absolute;left:35px;top:35px;width:50px;height:50px;border-radius:50%;background:rgba(255,255,255,.3)}
+.tbtns{position:absolute;right:30px;bottom:180px;display:flex;flex-direction:column;gap:10px;pointer-events:auto}
+.tbtn{pointer-events:auto;border:none;border-radius:10px;padding:14px 18px;font-weight:800;background:rgba(255,210,74,.85);color:#2a1a00}
