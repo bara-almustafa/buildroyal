@@ -2,7 +2,7 @@
 
 # 🏆 BuildRoyale
 
-**A Fortnite-style battle royale that runs entirely in your browser — build, fight, survive the storm.**
+**A first-person, Fortnite-style battle royale that runs entirely in your browser — build, fight, survive the storm.**
 
 Peer-to-peer over WebRTC · no game server · drops straight onto GitHub Pages.
 
@@ -19,10 +19,11 @@ Peer-to-peer over WebRTC · no game server · drops straight onto GitHub Pages.
 
 ## What is this?
 
-**BuildRoyale** is a top-down battle royale inspired by the Fortnite loop — **loot, shoot,
+**BuildRoyale** is a **first-person** battle royale inspired by the Fortnite loop — **loot, shoot,
 build walls for cover, and shrink into the final circle**. It's an *original* game (its own
 art and code, no copyrighted assets), built to be the simplest possible thing that still
-feels like a real battle royale.
+feels like a real battle royale. The world is simulated as a flat 2D arena and rendered
+in first person with a lightweight **raycasting engine** — no WebGL, no 3D model pipeline.
 
 The whole match runs **browser-to-browser over WebRTC** ([PeerJS](https://peerjs.com/)):
 one player hosts, friends join with a 6-character room code, and gameplay traffic flows
@@ -40,8 +41,8 @@ why the entire game is a **static site you can copy-paste onto GitHub Pages**.
 
 | Key | Action | Key | Action |
 |-----|--------|-----|--------|
-| `WASD` | Move | `Q` | Build wall |
-| Mouse | Aim | `F` | Build ramp |
+| `WASD` | Move (relative to view) | `Q` | Build wall |
+| Mouse | Look (click to lock) | `F` | Build ramp |
 | Click | Shoot | `R` | Reload |
 | `1` / `2` | Switch weapon | `E` | Pick up loot |
 | `Shift` | Sprint | | |
@@ -51,6 +52,7 @@ purple circle — the storm closes in and bites harder every phase. **Last one s
 
 ## Features
 
+- 👁️ **First-person view** — a from-scratch raycasting renderer with mouse-look, view-bob, a weapon viewmodel, and depth-sorted sprites
 - 🔫 **5 weapons** — pistol, SMG, rifle, shotgun, sniper, each with its own damage, spread, and fire rate
 - 🧱 **Building** — place grid-aligned walls and ramps for instant cover
 - 🌩️ **Shrinking storm** — six escalating damage phases that funnel everyone together
@@ -124,6 +126,7 @@ This is a static site, so **copy-paste deploy**:
 
 ## Roadmap
 
+- [x] **First-person view** (raycasting renderer, mouse-look, viewmodel)
 - [ ] Pickaxe harvesting (farm mats from trees/rocks)
 - [ ] Self-hosted PeerServer + TURN for any-NAT reliability
 - [ ] Squads / teams

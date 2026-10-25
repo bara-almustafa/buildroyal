@@ -479,22 +479,33 @@
     keys[e.key.toLowerCase()] = false;
     if (e.key.toLowerCase() === "shift") input.sprint = false;
   });
-  canvas.addEventListener("mousemove", function (e) { mouse.x = e.clientX; mouse.y = e.clientY; });
+  // First-person mouse-look via pointer lock: horizontal mouse movement turns
+  // the view, and the player's aim angle IS the view yaw.
+  var viewYaw = 0, locked = false;
+  canvas.addEventListener("click", function () {
+    if (render.started && !locked && canvas.requestPointerLock) canvas.requestPointerLock();
+  });
+  document.addEventListener("pointerlockchange", function () {
+    locked = (document.pointerLockElement === canvas);
+  });
+  canvas.addEventListener("mousemove", function (e) {
+    mouse.x = e.clientX; mouse.y = e.clientY;
+    if (locked) viewYaw += (e.movementX || 0) * 0.0026; // look sensitivity
+  });
   canvas.addEventListener("mousedown", function () { mouse.down = true; });
   window.addEventListener("mouseup", function () { mouse.down = false; });
   canvas.addEventListener("contextmenu", function (e) { e.preventDefault(); });
 
   function sampleInput() {
-    var ax = 0, ay = 0;
-    if (keys["w"]) ay -= 1; if (keys["s"]) ay += 1;
-    if (keys["a"]) ax -= 1; if (keys["d"]) ax += 1;
-    input.ax = ax; input.ay = ay;
-    // aim: world angle from my rendered position to the mouse
-    var me = render.players[myId];
-    var mx = me ? me.x : cam.x, my = me ? me.y : cam.y;
-    var wx = cam.x + (mouse.x - W / 2), wy = cam.y + (mouse.y - H / 2);
-    input.aim = Math.atan2(wy - my, wx - mx);
-    input.shoot = mouse.down;
+    // Movement is relative to where you're looking: W = forward along the yaw,
+    // A/D strafe, S back.
+    var fwd = (keys["w"] ? 1 : 0) - (keys["s"] ? 1 : 0);
+    var str = (keys["d"] ? 1 : 0) - (keys["a"] ? 1 : 0);
+    var cy = Math.cos(viewYaw), sy = Math.sin(viewYaw);
+    input.ax = cy * fwd - sy * str;
+    input.ay = sy * fwd + cy * str;
+    input.aim = viewYaw;
+    input.shoot = mouse.down && locked;
     input.sprint = !!keys["shift"];
     setupTouch();
   }
@@ -608,114 +619,236 @@
     }
   }
 
-  // ================================================================ RENDER
+  // ============================================================ RENDER (FPS)
+  // A raycasting first-person view. The simulation stays a flat 2D world; here
+  // we cast one ray per screen column across the field of view to draw walls,
+  // then project trees/rocks/loot/players/bullets as depth-sorted billboards.
+  var FOV = 72 * Math.PI / 180;
+  var GRIDN = Math.ceil(MAP / CELL);
+  var zbuf = new Float32Array(2048);     // per-column wall depth, for occlusion
+  var bob = 0, flash = 0, fireCd = 0, lastDraw = 0;
+
+  function shade(hex, f) {
+    var n = parseInt(hex.slice(1), 16);
+    var r = Math.round(((n >> 16) & 255) * f), g = Math.round(((n >> 8) & 255) * f), b = Math.round((n & 255) * f);
+    return "rgb(" + r + "," + g + "," + b + ")";
+  }
+  function wallAt(gx, gy, wm) {
+    if (gx < 0 || gy < 0 || gx >= GRIDN || gy >= GRIDN) return 2; // map border = solid
+    return wm[gx + "," + gy] ? 1 : 0;
+  }
+
   function drawFrame() {
-    // camera follows my predicted position (client) or authoritative (host)
+    var t = now(), dt = Math.min(0.05, (t - lastDraw) / 1000); lastDraw = t;
     var me = render.players[myId];
-    var mx, my;
-    if (role === "client" && predict.has) { mx = predict.x; my = predict.y; }
-    else if (me) { mx = me.x; my = me.y; }
-    else { mx = cam.x; my = cam.y; }
-    cam.x += (mx - cam.x) * 0.2; cam.y += (my - cam.y) * 0.2;
+    // eye position (no smoothing in FP, to avoid nausea)
+    var ex, ey;
+    if (role === "client" && predict.has) { ex = predict.x; ey = predict.y; }
+    else if (me) { ex = me.x; ey = me.y; }
+    else { ex = cam.x; ey = cam.y; }
+    cam.x = ex; cam.y = ey;
+    var yaw = viewYaw;
+
+    // view-bob + muzzle-flash feel
+    var moving = Math.hypot(input.ax, input.ay);
+    bob += moving > 0.1 ? dt * 9 * (input.sprint ? 1.5 : 1) : 0;
+    if (moving <= 0.1) bob *= 0.9;
+    if (input.shoot && me && me.al && me.mag > 0 && !me.rl) {
+      fireCd -= dt * 1000;
+      if (fireCd <= 0) { flash = 5; fireCd = (WEAPONS[me.sl] || { rate: 300 }).rate; }
+    } else fireCd = 0;
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.clearRect(0, 0, W, H);
-    ctx.save();
-    ctx.translate(W / 2 - cam.x, H / 2 - cam.y);
+    if (zbuf.length < W) zbuf = new Float32Array(W);
 
-    drawGround();
-    // loot
-    for (var i = 0; i < render.loot.length; i++) drawLoot(render.loot[i]);
-    // obstacles
-    for (var o = 0; o < world.obstacles.length; o++) drawObstacle(world.obstacles[o]);
-    // walls
-    for (var w = 0; w < render.walls.length; w++) drawWall(render.walls[w]);
-    // players
-    for (var id in render.players) drawPlayer(render.players[id], id === myId);
-    // bullets
-    ctx.lineWidth = 2;
-    for (var b = 0; b < render.bullets.length; b++) {
-      var bu = render.bullets[b];
-      ctx.fillStyle = bu[2] || "#fff";
-      ctx.beginPath(); ctx.arc(bu[0], bu[1], 3, 0, 7); ctx.fill();
+    // sky + floor
+    var sky = ctx.createLinearGradient(0, 0, 0, H / 2);
+    sky.addColorStop(0, "#28386a"); sky.addColorStop(1, "#7184b6");
+    ctx.fillStyle = sky; ctx.fillRect(0, 0, W, H / 2 + 1);
+    var gnd = ctx.createLinearGradient(0, H / 2, 0, H);
+    gnd.addColorStop(0, "#1b4a30"); gnd.addColorStop(1, "#3a8a58");
+    ctx.fillStyle = gnd; ctx.fillRect(0, H / 2, W, H / 2);
+
+    // wall lookup for this frame
+    var wm = {}, wmeta = {};
+    for (var i = 0; i < render.walls.length; i++) {
+      var wl = render.walls[i], gx = Math.floor(wl[0] / CELL), gy = Math.floor(wl[1] / CELL);
+      wm[gx + "," + gy] = 1; wmeta[gx + "," + gy] = { hp: wl[2], ramp: wl[3] };
     }
-    drawStorm();
-    ctx.restore();
 
-    drawHUD();
-    drawMini();
-  }
+    var dirX = Math.cos(yaw), dirY = Math.sin(yaw);
+    var pLen = Math.tan(FOV / 2);
+    var planeX = -dirY * pLen, planeY = dirX * pLen;
+    var posX = ex / CELL, posY = ey / CELL;
+    var step = W > 1100 ? 2 : 1;
 
-  function drawGround() {
-    ctx.fillStyle = "#245c3a";
-    ctx.fillRect(0, 0, MAP, MAP);
-    ctx.strokeStyle = "rgba(255,255,255,.04)"; ctx.lineWidth = 1;
-    for (var x = 0; x <= MAP; x += CELL * 2) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, MAP); ctx.stroke(); }
-    for (var y = 0; y <= MAP; y += CELL * 2) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(MAP, y); ctx.stroke(); }
-    // border
-    ctx.strokeStyle = "#13331f"; ctx.lineWidth = 8; ctx.strokeRect(0, 0, MAP, MAP);
-  }
-  function drawObstacle(o) {
-    if (o.type === "rock") { ctx.fillStyle = "#6b7280"; }
-    else { ctx.fillStyle = "#1f6b3a"; }
-    ctx.beginPath(); ctx.arc(o.x, o.y, o.r, 0, 7); ctx.fill();
-    if (o.type === "tree") { ctx.fillStyle = "#2f8f4f"; ctx.beginPath(); ctx.arc(o.x, o.y, o.r * 0.6, 0, 7); ctx.fill(); }
-  }
-  function drawWall(w) {
-    var h = CELL / 2, hp = w[2] / 120;
-    ctx.fillStyle = w[3] ? "rgba(180,140,90,.55)" : "#a9743f";
-    ctx.fillRect(w[0] - h, w[1] - h, CELL, CELL);
-    ctx.strokeStyle = "rgba(0,0,0,.3)"; ctx.strokeRect(w[0] - h, w[1] - h, CELL, CELL);
-    // hp tint
-    ctx.fillStyle = "rgba(0,0,0," + (0.35 * (1 - hp)) + ")";
-    ctx.fillRect(w[0] - h, w[1] - h, CELL, CELL);
-  }
-  function drawLoot(it) {
-    var kind = it[2];
-    ctx.save(); ctx.translate(it[0], it[1]);
-    var pulse = 1 + Math.sin(now() / 300) * 0.1;
-    ctx.scale(pulse, pulse);
-    if (kind === "shield") ctx.fillStyle = "#4aa3ff";
-    else if (kind === "mats") ctx.fillStyle = "#c9a06b";
-    else ctx.fillStyle = (WEAPONS[kind] && WEAPONS[kind].color) || "#ffd24a";
-    ctx.beginPath(); ctx.arc(0, 0, 9, 0, 7); ctx.fill();
-    ctx.fillStyle = "rgba(0,0,0,.6)"; ctx.font = "bold 10px sans-serif"; ctx.textAlign = "center";
-    ctx.fillText(kind === "shield" ? "S" : kind === "mats" ? "▦" : (WEAPONS[kind] ? WEAPONS[kind].name[0] : "?"), 0, 3);
-    ctx.restore();
-  }
-  function drawPlayer(p, isMe) {
-    if (!p.al) return;
-    var x = p.x, y = p.y;
-    if (isMe && role === "client" && predict.has) { x = predict.x; y = predict.y; }
-    ctx.save(); ctx.translate(x, y);
-    // gun
-    ctx.strokeStyle = "#222"; ctx.lineWidth = 5;
-    ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(Math.cos(p.a) * 26, Math.sin(p.a) * 26); ctx.stroke();
-    // body
-    ctx.fillStyle = p.df > 0 ? "#fff" : (isMe ? "#ffd24a" : (p.bot ? "#9aa3b5" : "#ff7a59"));
-    ctx.beginPath(); ctx.arc(0, 0, PLR_R, 0, 7); ctx.fill();
-    ctx.strokeStyle = "rgba(0,0,0,.4)"; ctx.lineWidth = 2; ctx.stroke();
-    ctx.restore();
-    // name + hp bar
-    ctx.fillStyle = "#fff"; ctx.font = "11px sans-serif"; ctx.textAlign = "center";
-    ctx.fillText(p.n, x, y - 26);
-    var bw = 34;
-    ctx.fillStyle = "rgba(0,0,0,.5)"; ctx.fillRect(x - bw / 2, y - 23, bw, 4);
-    ctx.fillStyle = "#39d98a"; ctx.fillRect(x - bw / 2, y - 23, bw * (p.hp / 100), 4);
-    if (p.sh > 0) { ctx.fillStyle = "#4aa3ff"; ctx.fillRect(x - bw / 2, y - 27, bw * (p.sh / 100), 3); }
-  }
-  function drawStorm() {
+    for (var x = 0; x < W; x += step) {
+      var camX = 2 * x / W - 1;
+      var rdx = dirX + planeX * camX, rdy = dirY + planeY * camX;
+      var mapX = Math.floor(posX), mapY = Math.floor(posY);
+      var ddx = Math.abs(1 / rdx), ddy = Math.abs(1 / rdy);
+      var stepX, stepY, sdx, sdy;
+      if (rdx < 0) { stepX = -1; sdx = (posX - mapX) * ddx; } else { stepX = 1; sdx = (mapX + 1 - posX) * ddx; }
+      if (rdy < 0) { stepY = -1; sdy = (posY - mapY) * ddy; } else { stepY = 1; sdy = (mapY + 1 - posY) * ddy; }
+      var hit = 0, side = 0, guard = 0;
+      while (hit === 0 && guard++ < 160) {
+        if (sdx < sdy) { sdx += ddx; mapX += stepX; side = 0; } else { sdy += ddy; mapY += stepY; side = 1; }
+        hit = wallAt(mapX, mapY, wm);
+      }
+      var perp = side === 0 ? (sdx - ddx) : (sdy - ddy);
+      if (perp < 0.02) perp = 0.02;
+      for (var z = 0; z < step; z++) if (x + z < W) zbuf[x + z] = perp;
+      var lh = (H / perp) * 0.95;
+      var y0 = H / 2 - lh / 2;
+      var col;
+      if (hit === 2) { col = shade("#143a22", side ? 0.7 : 1); }
+      else {
+        var m = wmeta[mapX + "," + mapY], dmg = m ? m.hp / 120 : 1;
+        col = shade(m && m.ramp ? "#b4916a" : "#a9743f", (side ? 0.72 : 1) * (0.5 + 0.5 * dmg));
+      }
+      ctx.fillStyle = col; ctx.fillRect(x, y0, step, lh);
+      var fog = clamp(perp / 26, 0, 0.72);
+      if (fog > 0) { ctx.fillStyle = "rgba(18,28,24," + fog + ")"; ctx.fillRect(x, y0, step, lh); }
+    }
+
+    // ---- billboards (far -> near) ----
+    var sprites = [];
+    for (var o = 0; o < world.obstacles.length; o++) { var ob = world.obstacles[o]; sprites.push({ x: ob.x, y: ob.y, kind: ob.type }); }
+    for (var l = 0; l < render.loot.length; l++) { var it = render.loot[l]; sprites.push({ x: it[0], y: it[1], kind: "loot", sub: it[2] }); }
+    for (var bb = 0; bb < render.bullets.length; bb++) { var bu = render.bullets[bb]; sprites.push({ x: bu[0], y: bu[1], kind: "bullet", c: bu[2] }); }
+    for (var id in render.players) { var pp = render.players[id]; if (!pp.al || id === myId) continue; sprites.push({ x: pp.x, y: pp.y, kind: "player", p: pp }); }
+    for (var s2 = 0; s2 < sprites.length; s2++) sprites[s2].d = dist2(sprites[s2].x, sprites[s2].y, ex, ey);
+    sprites.sort(function (a, b) { return b.d - a.d; });
+
+    var invDet = 1 / (planeX * dirY - dirX * planeY);
+    for (var sp = 0; sp < sprites.length; sp++) {
+      var S = sprites[sp];
+      var rx = (S.x - ex) / CELL, ry = (S.y - ey) / CELL;
+      var tx = invDet * (dirY * rx - dirX * ry);
+      var ty = invDet * (-planeY * rx + planeX * ry);   // depth
+      if (ty <= 0.08) continue;
+      drawSprite(S, (W / 2) * (1 + tx / ty), ty);
+    }
+
+    // storm tint when outside the safe zone
     var st = render.storm;
-    ctx.save();
-    // darken everything, then punch a hole for the safe zone
-    ctx.fillStyle = "rgba(120,60,200,.28)";
+    if (dist2(ex, ey, st.cx, st.cy) > st.r * st.r) {
+      var vg = ctx.createRadialGradient(W / 2, H / 2, H * 0.15, W / 2, H / 2, H * 0.75);
+      vg.addColorStop(0, "rgba(140,80,220,.12)"); vg.addColorStop(1, "rgba(140,80,220,.55)");
+      ctx.fillStyle = vg; ctx.fillRect(0, 0, W, H);
+    }
+
+    drawViewmodel(me);
+    drawCrosshair();
+    if (!locked && render.started) {
+      ctx.fillStyle = "rgba(0,0,0,.55)"; ctx.fillRect(W / 2 - 130, H * 0.62, 260, 40);
+      ctx.fillStyle = "#fff"; ctx.font = "16px sans-serif"; ctx.textAlign = "center";
+      ctx.fillText("Click to look & shoot", W / 2, H * 0.62 + 25);
+    }
+    drawHUD();
+    drawMini(yaw);
+  }
+
+  // Clip subsequent drawing to the screen columns where this sprite is in front
+  // of the wall at that column (cheap per-column occlusion).
+  function clipByDepth(x0, x1, depth) {
+    x0 = Math.max(0, Math.floor(x0)); x1 = Math.min(W, Math.ceil(x1));
     ctx.beginPath();
-    ctx.rect(0, 0, MAP, MAP);
-    ctx.arc(st.cx, st.cy, st.r, 0, 7, true);
-    ctx.fill("evenodd");
-    ctx.strokeStyle = "#b388ff"; ctx.lineWidth = 4;
-    ctx.beginPath(); ctx.arc(st.cx, st.cy, st.r, 0, 7); ctx.stroke();
+    var open = -1;
+    for (var cx = x0; cx <= x1; cx++) {
+      var vis = cx < x1 && depth < zbuf[cx];
+      if (vis && open < 0) open = cx;
+      else if (!vis && open >= 0) { ctx.rect(open, 0, cx - open, H); open = -1; }
+    }
+    ctx.clip();
+  }
+
+  function drawSprite(S, sx, depth) {
+    var size = H / depth;
+    if (S.kind === "player") {
+      var h = size * 0.95, w = h * 0.45, p = S.p;
+      var top = H / 2 - h * 0.55;
+      ctx.save(); clipByDepth(sx - w, sx + w, depth);
+      // body
+      ctx.fillStyle = p.df > 0 ? "#fff" : (p.bot ? "#9aa3b5" : "#ff7a59");
+      ctx.fillRect(sx - w / 2, H / 2 - h * 0.12, w, h * 0.5);
+      // head
+      ctx.fillStyle = p.df > 0 ? "#fff" : "#ffd9c2";
+      ctx.beginPath(); ctx.arc(sx, H / 2 - h * 0.22, w * 0.42, 0, 7); ctx.fill();
+      // held gun
+      ctx.fillStyle = "#2a2a2a"; ctx.fillRect(sx - w * 0.1, H / 2 - h * 0.02, w * 0.9, h * 0.06);
+      ctx.restore();
+      // only label the player if they're actually visible (not behind a wall)
+      var cc = Math.floor(sx), vis = cc >= 0 && cc < W && depth < zbuf[cc];
+      if (vis && depth < 34) {
+        var fs = clamp(240 / depth, 10, 22);
+        ctx.fillStyle = "#fff"; ctx.font = fs + "px sans-serif"; ctx.textAlign = "center";
+        ctx.fillText(p.n, sx, top - 6);
+        var bw = w;
+        ctx.fillStyle = "rgba(0,0,0,.6)"; ctx.fillRect(sx - bw / 2, top - 3, bw, 4);
+        ctx.fillStyle = "#39d98a"; ctx.fillRect(sx - bw / 2, top - 3, bw * (p.hp / 100), 4);
+        if (p.sh > 0) { ctx.fillStyle = "#4aa3ff"; ctx.fillRect(sx - bw / 2, top - 7, bw * (p.sh / 100), 3); }
+      }
+    } else if (S.kind === "tree") {
+      var th = size * 1.15, tw = th * 0.55;
+      ctx.save(); clipByDepth(sx - tw / 2, sx + tw / 2, depth);
+      ctx.fillStyle = "#6b4a2a"; ctx.fillRect(sx - tw * 0.1, H / 2, tw * 0.2, th * 0.45);
+      ctx.fillStyle = "#2f8f4f"; ctx.beginPath(); ctx.arc(sx, H / 2, tw * 0.5, 0, 7); ctx.fill();
+      ctx.fillStyle = "#247a40"; ctx.beginPath(); ctx.arc(sx, H / 2 - th * 0.12, tw * 0.38, 0, 7); ctx.fill();
+      ctx.restore();
+    } else if (S.kind === "rock") {
+      var rh = size * 0.55, rw = size * 0.75;
+      ctx.save(); clipByDepth(sx - rw / 2, sx + rw / 2, depth);
+      ctx.fillStyle = "#6b7280"; ctx.beginPath(); ctx.ellipse(sx, H / 2 + rh * 0.35, rw * 0.5, rh * 0.5, 0, 0, 7); ctx.fill();
+      ctx.fillStyle = "#818996"; ctx.beginPath(); ctx.ellipse(sx - rw * 0.1, H / 2 + rh * 0.2, rw * 0.3, rh * 0.3, 0, 0, 7); ctx.fill();
+      ctx.restore();
+    } else if (S.kind === "loot") {
+      var c = Math.floor(sx);
+      if (c < 0 || c >= W || depth >= zbuf[c]) return;
+      var sz = Math.max(6, size * 0.16);
+      var col = S.sub === "shield" ? "#4aa3ff" : S.sub === "mats" ? "#c9a06b" : (WEAPONS[S.sub] && WEAPONS[S.sub].color) || "#ffd24a";
+      var yy = H / 2 + sz * 0.6 + Math.sin(now() / 300) * 4;
+      ctx.save(); ctx.translate(sx, yy); ctx.rotate(Math.PI / 4);
+      ctx.fillStyle = col; ctx.fillRect(-sz / 2, -sz / 2, sz, sz); ctx.restore();
+      ctx.fillStyle = "rgba(0,0,0,.65)"; ctx.font = "bold " + Math.round(sz * 0.8) + "px sans-serif"; ctx.textAlign = "center";
+      ctx.fillText(S.sub === "shield" ? "S" : S.sub === "mats" ? "▦" : (WEAPONS[S.sub] ? WEAPONS[S.sub].name[0] : "?"), sx, yy + sz * 0.3);
+    } else if (S.kind === "bullet") {
+      var cc = Math.floor(sx);
+      if (cc < 0 || cc >= W || depth >= zbuf[cc]) return;
+      var bs = Math.max(2, size * 0.04);
+      ctx.fillStyle = S.c || "#fff";
+      ctx.beginPath(); ctx.arc(sx, H / 2, bs, 0, 7); ctx.fill();
+    }
+  }
+
+  function drawViewmodel(me) {
+    var b = Math.sin(bob) * 7, bx = Math.cos(bob * 0.5) * 4;
+    var gx = W * 0.62 + bx, gy = H - 54 + b;
+    var W2 = me ? WEAPONS[me.sl] : null, col = W2 ? W2.color : "#ccc";
+    ctx.save();
+    ctx.strokeStyle = "#ffd9c2"; ctx.lineWidth = 18; ctx.lineCap = "round";
+    ctx.beginPath(); ctx.moveTo(W * 0.5, H + 10); ctx.lineTo(gx - 28, gy + 14); ctx.stroke();
+    ctx.fillStyle = "#2a2a2a"; ctx.fillRect(gx - 44, gy, 128, 22);
+    ctx.fillStyle = col; ctx.fillRect(gx + 64, gy + 5, 36, 11);
+    ctx.fillStyle = "#1f1f1f"; ctx.fillRect(gx - 22, gy + 20, 18, 34);
+    if (flash > 0) {
+      ctx.fillStyle = "rgba(255,220,120," + (flash / 6) + ")";
+      ctx.beginPath(); ctx.arc(gx + 104, gy + 10, 20 * (flash / 6) + 6, 0, 7); ctx.fill();
+      flash--;
+    }
     ctx.restore();
+  }
+
+  function drawCrosshair() {
+    var cx = W / 2, cy = H / 2, g = 6, l = 10;
+    ctx.strokeStyle = "rgba(255,255,255,.85)"; ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(cx - g - l, cy); ctx.lineTo(cx - g, cy);
+    ctx.moveTo(cx + g, cy); ctx.lineTo(cx + g + l, cy);
+    ctx.moveTo(cx, cy - g - l); ctx.lineTo(cx, cy - g);
+    ctx.moveTo(cx, cy + g); ctx.lineTo(cx, cy + g + l);
+    ctx.stroke();
+    ctx.fillStyle = "rgba(255,255,255,.9)"; ctx.fillRect(cx - 1, cy - 1, 2, 2);
   }
 
   // ---- HUD ----
@@ -739,7 +872,7 @@
   }
   function esc(s) { return String(s).replace(/[&<>]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]; }); }
 
-  function drawMini() {
+  function drawMini(yaw) {
     var s = 160 / MAP;
     mctx.clearRect(0, 0, 160, 160);
     mctx.fillStyle = "#15402a"; mctx.fillRect(0, 0, 160, 160);
@@ -752,6 +885,13 @@
       var p = render.players[id]; if (!p.al) continue;
       mctx.fillStyle = id === myId ? "#ffd24a" : (p.bot ? "#9aa3b5" : "#ff7a59");
       mctx.beginPath(); mctx.arc(p.x * s, p.y * s, id === myId ? 3.2 : 2.2, 0, 7); mctx.fill();
+    }
+    // my facing heading
+    var me = render.players[myId];
+    if (me && me.al && typeof yaw === "number") {
+      mctx.strokeStyle = "#ffd24a"; mctx.lineWidth = 2;
+      mctx.beginPath(); mctx.moveTo(me.x * s, me.y * s);
+      mctx.lineTo(me.x * s + Math.cos(yaw) * 14, me.y * s + Math.sin(yaw) * 14); mctx.stroke();
     }
   }
 
